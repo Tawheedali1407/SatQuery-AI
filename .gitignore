@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+backend/data/
+.env
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Downloaded demo data (re-create with backend/scripts/fetch_samples.py)
+samples/*
+!samples/README.md
+
+# Model weights never go in git
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

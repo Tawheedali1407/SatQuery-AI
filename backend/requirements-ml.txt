@@ -1,0 +1,6 @@
+# Optional: open-ended visual question answering with BLIP-VQA.
+# Works on CPU (~1 GB download, ~1-2 s per answer); a CUDA GPU makes it faster.
+# For a CUDA build of torch, install it first from https://pytorch.org/get-started/locally/
+-r requirements.txt
+torch>=2.2
+transformers>=4.40

@@ -1,0 +1,8 @@
+services:
+  satquery:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      SATQUERY_MAX_ANALYSIS_PX: "2048"
+      SATQUERY_VQA_BACKEND: "rules"
