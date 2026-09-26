@@ -68,8 +68,8 @@ The pretrained model is **2.6× more accurate** than the classical baseline, whi
 **Requirements:** Python 3.10+ and Node 18+. No GPU needed.
 
 ```bash
-git clone https://github.com/<your-org>/satquery-ai.git
-cd satquery-ai
+git clone https://github.com/Tawheedali1407/SatQuery-AI.git
+cd SatQuery-AI
 
 # 1. Backend
 cd backend
