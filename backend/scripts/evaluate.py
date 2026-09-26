@@ -55,29 +55,41 @@ def main():
              "Pooled scores sum TP/FP/FN over all pixels of all samples.", ""]
 
     # ---------------------------------------------------------------- change detection
-    cd_rows, cd_ms = [], []
-    for it in cat:
-        if not it["id"].startswith("levir") or "labels" not in it:
-            continue
-        a = load_scene(SAMPLES / it["files"][0]["file"], gsd_m=0.5, modality="optical")
-        b = load_scene(SAMPLES / it["files"][1]["file"], gsd_m=0.5, modality="optical")
-        gt = np.array(Image.open(SAMPLES / it["labels"])) > 0
-        t = time.perf_counter()
-        pred = detect_change(a, b)["mask"]
-        cd_ms.append((time.perf_counter() - t) * 1000)
-        cd_rows.append(scores(pred, gt) | {"id": it["id"]})
-    if cd_rows:
-        pl = pooled(cd_rows)
-        lines += ["## Change detection — LEVIR-CD samples", "",
-                  f"Method: unsupervised histogram matching + CVA + SSIM, Otsu threshold (no training). "
-                  f"{len(cd_rows)} pairs, 256×256 px at 0.5 m.", "",
-                  "| Pair | Precision | Recall | F1 | IoU |", "|---|---|---|---|---|"]
-        lines += [f"| {r['id']} | {r['precision']:.3f} | {r['recall']:.3f} | {r['f1']:.3f} | {r['iou']:.3f} |" for r in cd_rows]
-        lines += [f"| **pooled** | **{pl['precision']:.3f}** | **{pl['recall']:.3f}** | **{pl['f1']:.3f}** | **{pl['iou']:.3f}** |",
-                  "", f"Mean latency: {np.mean(cd_ms):.0f} ms per pair on CPU.", "",
-                  "For context, supervised deep models (BIT, ChangeFormer) report F1 ≈ 0.89–0.90 on the full "
-                  "LEVIR-CD test set; plugging one in behind `detect_change()` is the planned GPU upgrade.", ""]
-        print(f"Change detection pooled F1={pl['f1']:.3f} IoU={pl['iou']:.3f} over {len(cd_rows)} pairs")
+    from app.ml import changeformer
+
+    backends = ["classical"] + (["changeformer"] if changeformer.available() else [])
+    levir = [it for it in cat if it["id"].startswith("levir") and "labels" in it]
+    summary = {}
+    for be in backends:
+        rows, ms = [], []
+        for it in levir:
+            a = load_scene(SAMPLES / it["files"][0]["file"], gsd_m=0.5, modality="optical")
+            b = load_scene(SAMPLES / it["files"][1]["file"], gsd_m=0.5, modality="optical")
+            gt = np.array(Image.open(SAMPLES / it["labels"])) > 0
+            detect_change(a, b, backend=be)  # warm-up (model load) excluded from timing
+            t = time.perf_counter()
+            pred = detect_change(a, b, backend=be)["mask"]
+            ms.append((time.perf_counter() - t) * 1000)
+            rows.append(scores(pred, gt) | {"id": it["id"]})
+        summary[be] = (rows, pooled(rows), float(np.mean(ms)))
+        print(f"Change detection [{be}] pooled F1={summary[be][1]['f1']:.3f} IoU={summary[be][1]['iou']:.3f}")
+    if levir:
+        names = {"classical": "Classical (histogram matching + CVA + SSIM, no training)",
+                 "changeformer": "ChangeFormerV6, pretrained on LEVIR-CD train split (open weights, GitHub)"}
+        lines += ["## Change detection — LEVIR-CD test samples", "",
+                  f"{len(levir)} pairs from the LEVIR-CD **test** split (256×256 px, 0.5 m), which the pretrained "
+                  "model never saw during training.", "",
+                  "| Method | Precision | Recall | F1 | IoU | CPU time / pair |", "|---|---|---|---|---|---|"]
+        for be, (_rows, pl, ms) in summary.items():
+            lines.append(f"| {names[be]} | {pl['precision']:.3f} | {pl['recall']:.3f} | **{pl['f1']:.3f}** | "
+                         f"{pl['iou']:.3f} | {ms:.0f} ms |")
+        lines += ["", "Per-pair F1:", "", "| Pair | " + " | ".join(summary) + " |",
+                  "|---|" + "---|" * len(summary)]
+        for i, it in enumerate(levir):
+            lines.append(f"| {it['id']} | " + " | ".join(f"{summary[be][0][i]['f1']:.3f}" for be in summary) + " |")
+        lines += ["", "Five pairs is a small sample: treat these as a sanity check. The ChangeFormer paper reports "
+                  "F1 = 0.904 on the full 2,048-tile LEVIR-CD test set. CPU time measured on a 2-core cloud VM; "
+                  "a laptop is typically faster, a GPU much faster.", ""]
 
     # ---------------------------------------------------------------- water / fusion
     wrows = {"optical": [], "sar": [], "fused": []}

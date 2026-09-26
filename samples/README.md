@@ -11,3 +11,9 @@ dataset licences stay with their owners.
 | `sen1floods11/` | Sen1Floods11, Bonafilia et al., CVPR-W 2020 — India flood chips | CC BY 4.0 |
 
 `catalog.json` describes each demo (files, roles, suggested queries) and is read by the API.
+
+## Models
+
+`backend/scripts/fetch_models.py` downloads ChangeFormerV6 code (MIT, pinned commit) and its LEVIR-CD
+weights from the authors' GitHub release (github.com/wgcban/ChangeFormer) into `backend/third_party/`
+and `backend/weights/`, both git-ignored.

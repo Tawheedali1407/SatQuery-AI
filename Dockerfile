@@ -10,9 +10,16 @@ RUN npm run build
 FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
-COPY backend/requirements.txt backend/requirements.txt
-RUN pip install --no-cache-dir -r backend/requirements.txt
+# Build with `--build-arg WITH_ML=1` to include ChangeFormer (adds ~1 GB for CPU torch + 165 MB weights).
+ARG WITH_ML=0
+COPY backend/requirements*.txt backend/
+RUN pip install --no-cache-dir -r backend/requirements.txt && \
+    if [ "$WITH_ML" = "1" ]; then \
+      pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
+      pip install --no-cache-dir timm einops transformers; \
+    fi
 COPY backend/ backend/
+RUN if [ "$WITH_ML" = "1" ]; then python backend/scripts/fetch_models.py; fi
 COPY --from=web /web/dist frontend/dist
 # Demo scenes are downloaded at build time (public sources, see scripts/fetch_samples.py).
 # Failures are tolerated so the image still builds offline.

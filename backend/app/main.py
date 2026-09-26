@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import logging
 import shutil
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,15 +20,18 @@ from pydantic import BaseModel, Field
 from . import __version__
 from .agent import run_query
 from .config import settings
+from .ml import changeformer
 from .raster import HAS_RASTERIO, SUPPORTED_EXT, load_scene
 from .store import load_sample, sample_catalog, store
-from .tools.vqa import blip_available
+from .tools.vqa import vqa_backends
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("satquery")
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    if changeformer.available():  # load weights in the background so the first query is not slow
+        threading.Thread(target=changeformer.warmup, daemon=True).start()
     yield
     shutil.rmtree(settings.data_dir, ignore_errors=True)  # uploaded scenes are session-local
 
@@ -50,7 +54,8 @@ def health():
         "version": __version__,
         "mode": "live",  # every answer is computed from pixels; there is no mock path
         "geotiff_support": HAS_RASTERIO,
-        "vqa_backend": "rules + blip" if blip_available() else "rules",
+        "vqa_backend": vqa_backends(),
+        "change_backend": "changeformer" if changeformer.available() else "classical",
         "scenes": len(store.list()),
     }
 

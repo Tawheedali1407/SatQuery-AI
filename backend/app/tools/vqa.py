@@ -98,7 +98,7 @@ def _blip():
 
 
 def blip_available() -> bool:
-    if settings.vqa_backend == "rules":
+    if settings.vqa_backend not in ("auto", "blip"):
         return False
     try:
         import torch  # noqa: F401
@@ -119,3 +119,25 @@ def blip_answer(scene: Scene, question: str) -> str:
     with torch.no_grad():
         out = model.generate(**inputs, max_new_tokens=20)
     return proc.decode(out[0], skip_special_tokens=True)
+
+
+def vqa_backends() -> str:
+    from ..ml import gemini
+
+    chain = [n for n, ok in (("gemini", gemini.available()), ("blip", blip_available())) if ok]
+    return " + ".join(["rules", *chain])
+
+
+def open_answer(scene: Scene, question: str, lc: dict) -> tuple[str, str] | None:
+    """Open-ended question the rules could not parse: try Gemini, then BLIP. Returns (text, backend)."""
+    from ..ml import gemini
+
+    if gemini.available():
+        try:
+            return gemini.answer(scene, question, lc), "gemini"
+        except Exception as e:  # network down, quota, bad key -> fall through to local model
+            log.warning("Gemini failed (%s); falling back", e)
+    if blip_available():
+        text = blip_answer(scene, question)
+        return f"{text.capitalize()}. (Short answer from BLIP-VQA, a general vision-language model — verify visually.)", "blip"
+    return None

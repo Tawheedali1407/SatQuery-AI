@@ -1,6 +1,9 @@
-# Optional: open-ended visual question answering with BLIP-VQA.
-# Works on CPU (~1 GB download, ~1-2 s per answer); a CUDA GPU makes it faster.
-# For a CUDA build of torch, install it first from https://pytorch.org/get-started/locally/
+# Optional deep models — all open weights, no API keys.
+#   * ChangeFormerV6 change detection (then run: python scripts/fetch_models.py)
+#   * BLIP-VQA for open-ended questions (downloads ~1 GB from Hugging Face on first use)
+# CPU works; for an NVIDIA GPU install the CUDA build of torch first from https://pytorch.org/get-started/locally/
 -r requirements.txt
 torch>=2.2
+timm>=0.9
+einops>=0.7
 transformers>=4.40

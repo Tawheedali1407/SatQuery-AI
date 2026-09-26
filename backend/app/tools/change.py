@@ -18,6 +18,7 @@ from skimage.exposure import match_histograms
 from skimage.metrics import structural_similarity
 from skimage.transform import resize
 
+from ..config import settings
 from ..raster import Scene
 from .common import area, clean_mask, margin_confidence, otsu, regions
 from .landcover import classify
@@ -39,12 +40,43 @@ def _align(before: Scene, after: Scene) -> tuple[np.ndarray, np.ndarray, list[st
     return a, b, warnings
 
 
-def detect_change(before: Scene, after: Scene, sigma: float = 1.5, min_px: int | None = None) -> dict:
+def pick_backend(before: Scene, requested: str | None = None) -> str:
+    """'changeformer' for high-resolution optical pairs when the weights are installed, else 'classical'."""
+    from ..ml import changeformer
+
+    requested = requested or settings.change_backend
+    if requested == "classical" or before.modality != "optical":
+        return "classical"
+    if changeformer.available() and (requested == "changeformer" or changeformer.suitable(before.gsd_m)):
+        return "changeformer"
+    return "classical"
+
+
+def detect_change(before: Scene, after: Scene, sigma: float = 1.5, min_px: int | None = None,
+                  backend: str | None = None) -> dict:
     a, b, warnings = _align(before, after)
     h, w = a.shape[:2]
     min_px = min_px or max(16, int(h * w * 0.0004))
+    backend = pick_backend(before, backend)
+    spread = None
 
-    if before.modality == "sar":
+    if backend == "changeformer":
+        from ..ml import changeformer
+
+        # Prefer the unstretched 8-bit pixels the network was trained on; fall back to stretched RGB
+        # for 16-bit / reflectance products.
+        ra = before.rgb8 if before.rgb8 is not None else before.rgb()
+        rb = after.rgb8 if after.rgb8 is not None else after.rgb()
+        if rb.shape != ra.shape:
+            rb = resize(rb, ra.shape, order=1, preserve_range=True).astype(np.float32)
+        mag = changeformer.predict(ra, rb)  # P(change)
+        thr = 0.5
+        increase = (rb.mean(-1) - ra.mean(-1)) > 0
+        min_px = 8  # the network's output is already spatially coherent
+        method = "ChangeFormerV6 (transformer Siamese network, pretrained on LEVIR-CD), tiled 256 px inference"
+        if before.gsd_m and before.gsd_m > settings.change_max_gsd_m:
+            warnings.append(f"ChangeFormer was trained on 0.5 m imagery; this scene is {before.gsd_m:.1f} m/px.")
+    elif before.modality == "sar":
         da = lee_filter(before.sar_db)
         db = lee_filter(after.sar_db if after.sar_db.shape == da.shape
                         else resize(after.sar_db, da.shape, order=1, preserve_range=True).astype(np.float32))
@@ -74,10 +106,15 @@ def detect_change(before: Scene, after: Scene, sigma: float = 1.5, min_px: int |
             thr = float(mag.max()) + 1
         increase = diff.mean(-1) > 0  # brighter after (e.g. new roofs, cleared land)
         method = "histogram matching + CVA + structural dissimilarity (SSIM), Otsu threshold"
-        spread = None
 
-    mask = clean_mask(mag > thr, min_px=min_px, close=2)
-    score = np.clip((mag - thr) / (thr + 1e-6), 0, 1)
+    deep = backend == "changeformer"
+    mask = clean_mask(mag > thr, min_px=min_px, close=0 if deep else 2, open_=not deep)
+    if backend == "changeformer":
+        score = mag
+        confidence = round(float(mag[mask].mean()), 3) if mask.any() else round(float(1 - mag.mean()), 3)
+    else:
+        score = np.clip((mag - thr) / (thr + 1e-6), 0, 1)
+        confidence = margin_confidence(mag, thr, mask, spread=spread)
     return {
         "mask": mask,
         "magnitude": mag,
@@ -86,9 +123,10 @@ def detect_change(before: Scene, after: Scene, sigma: float = 1.5, min_px: int |
         "threshold": round(float(thr), 4),
         "fraction": round(float(mask.mean()), 4),
         "area": area(int(mask.sum()), before.gsd_m),
-        "regions": regions(mask, before.gsd_m, "change", score_map=score),
-        "confidence": margin_confidence(mag, thr, mask, spread=spread),
+        "regions": regions(mask, before.gsd_m, "building change" if deep else "change", score_map=score),
+        "confidence": confidence,
         "method": method,
+        "backend": backend,
         "warnings": warnings,
     }
 

@@ -43,6 +43,7 @@ class Scene:
     size_bytes: int = 0
     sar_db: np.ndarray | None = None  # raw backscatter in dB for SAR scenes
     valid: np.ndarray | None = None  # False for no-data pixels (scene edges, masked areas)
+    rgb8: np.ndarray | None = None  # unstretched RGB in [0, 1] for 8-bit sources (what deep models were trained on)
     meta: dict = field(default_factory=dict)
 
     @property
@@ -140,6 +141,7 @@ def load_scene(
             if bands is None and len(band_desc) == ds.count:
                 bands = [d.upper() for d in band_desc]
             dtype_float = np.issubdtype(np.dtype(ds.dtypes[0]), np.floating)
+            is_8bit = ds.dtypes[0] == "uint8"
     else:
         img = Image.open(path)
         h0, w0 = img.height, img.width
@@ -156,6 +158,7 @@ def load_scene(
         if raw.shape[-1] == 4:  # drop alpha
             raw = raw[..., :3]
         dtype_float = False
+        is_8bit = img.mode in ("L", "RGB", "RGBA")
 
     valid = np.isfinite(raw).all(-1) & (np.nan_to_num(raw) != 0).any(-1)
     if valid.mean() < 0.01:  # an all-zero band layout is data, not no-data
@@ -199,5 +202,7 @@ def load_scene(
         size_bytes=path.stat().st_size,
         sar_db=sar_db,
         valid=valid,
+        rgb8=(np.nan_to_num(raw[..., :3]) / 255.0).astype(np.float32)
+        if (is_8bit and modality == "optical" and raw.shape[-1] >= 3) else None,
         meta=meta or {},
     )

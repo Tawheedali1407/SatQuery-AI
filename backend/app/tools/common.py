@@ -13,9 +13,9 @@ def otsu(values: np.ndarray, fallback: float) -> float:
     return float(threshold_otsu(v))
 
 
-def clean_mask(mask: np.ndarray, min_px: int = 16, close: int = 2) -> np.ndarray:
+def clean_mask(mask: np.ndarray, min_px: int = 16, close: int = 2, open_: bool = True) -> np.ndarray:
     """Morphological open/close then drop specks smaller than `min_px`."""
-    m = ndi.binary_opening(mask, iterations=1)
+    m = ndi.binary_opening(mask, iterations=1) if open_ else mask
     if close:
         m = ndi.binary_closing(m, iterations=close)
     lab, n = ndi.label(m)

@@ -1,0 +1,12 @@
+**/.env
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+backend/data
+backend/weights
+backend/third_party
+frontend/node_modules
+frontend/dist
+samples/*
+!samples/README.md
+.git

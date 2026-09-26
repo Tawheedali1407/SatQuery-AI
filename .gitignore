@@ -16,6 +16,9 @@ frontend/dist/
 samples/*
 !samples/README.md
 
+# Model weights and third-party model code are downloaded by backend/scripts/fetch_models.py
+backend/weights/
+backend/third_party/
 # Model weights never go in git
 *.pt
 *.pth

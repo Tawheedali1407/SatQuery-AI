@@ -5,7 +5,9 @@ Ask a question about a satellite scene in plain English. An orchestrator routes 
 
 > Smart India Hackathon 2026 · Problem Statement **26167** (ISRO / SAC) · Space Technology · **Team Hydra**
 
-![Grounding water bodies on a Landsat 7 scene](docs/screenshots/02_ground.png)
+![ChangeFormer finding a new warehouse between two dates](docs/screenshots/03_change.png)
+
+**No paid APIs and no API keys are required.** Every model is open (weights from GitHub) and runs locally on CPU. Google Gemini is an *optional* free add-on for open-ended questions.
 
 ---
 
@@ -18,17 +20,17 @@ Ask a question about a satellite scene in plain English. An orchestrator routes 
 | Change over time | Not supported | Bi-temporal change + per-class gain / loss |
 | SAR | Not supported | Lee speckle filter, backscatter water mapping |
 | Optical + SAR | — | Decision-level fusion with cloud screening |
-| Hardware | GPU required | Runs on any laptop CPU; GPU models are optional plug-ins |
-| Accuracy | Unknown | Benchmarked against ground truth (`docs/benchmarks.md`) |
+| Hardware | GPU required | Runs on any laptop CPU; uses a GPU automatically if present |
+| Accuracy | Unknown | Benchmarked against ground truth: **change-detection F1 0.90** (`docs/benchmarks.md`) |
 
 ## What it can do
 
 | Module | Example query | How it works |
 |---|---|---|
-| **RS-VQA** | *"How much of the scene is water?"*, *"How many water bodies?"*, *"Is there more vegetation or built-up area?"* | Question-type parser answers from measured land-cover statistics; optional BLIP-VQA for open-ended questions |
+| **RS-VQA** | *"How much of the scene is water?"*, *"How many water bodies?"*, *"Is there more vegetation or built-up area?"* | Question-type parser answers from measured land-cover statistics. Open-ended questions go to Gemini (optional free key), then BLIP-VQA (local), grounded on the measured numbers |
 | **Land cover** | *"Classify the land cover"* | NDVI / NDWI (with NIR) or visible-band indices, Otsu thresholds, cloud + no-data masking |
 | **Region grounding** | *"Locate water bodies in the north-east"* | Class mask → connected components → ranked boxes, sector filter |
-| **Change detection** | *"What changed between the two dates?"*, *"How much new built-up area appeared?"* | Histogram matching + Change Vector Analysis + structural dissimilarity (SSIM); SAR uses log-ratio |
+| **Change detection** | *"What changed between the two dates?"*, *"How much new built-up area appeared?"* | **ChangeFormerV6** transformer (pretrained on LEVIR-CD, open GitHub weights) with tiled inference for high-resolution imagery. Classical CVA + SSIM for 10 m data or when weights aren't installed. SAR uses log-ratio |
 | **Flood / class change** | *"Did water increase?"* | Per-date class maps → gained / lost area |
 | **Optical–SAR fusion** | *"Fuse optical and SAR to map flood water"* | Independent water maps, rule-based fusion: SAR fills in under cloud, disagreements flagged for review |
 
@@ -51,15 +53,15 @@ Each specialist is a plain Python function with the same contract (scenes in, ma
 
 ## Results (measured, not claimed)
 
-Run `python backend/scripts/evaluate.py` to reproduce these on your machine. Numbers below are from the current commit, on CPU, with **no training**:
+Reproduce with `python backend/scripts/evaluate.py`. These are CPU numbers on the LEVIR-CD **test** pairs in `samples/` (never seen in training):
 
-| Task | Data | Metric | Score |
-|---|---|---|---|
-| Change detection | LEVIR-CD sample pairs (5 × 256², 0.5 m) | Pooled F1 / IoU | **0.340 / 0.205** |
-| Change detection | same | Latency per pair (CPU) | **≈ 40 ms** |
-| Water mapping (optical, SAR, fused) | Sen1Floods11 India chips | IoU | run `evaluate.py` after downloading the chips |
+| Task | Method | Precision | Recall | F1 | IoU | CPU time / 256² pair |
+|---|---|---|---|---|---|---|
+| Change detection | Classical CVA + SSIM (no training) | 0.243 | 0.564 | 0.340 | 0.205 | 41 ms |
+| Change detection | **ChangeFormerV6 (pretrained, open weights)** | **0.906** | **0.892** | **0.899** | **0.816** | ≈1.7 s (2-core VM) |
+| Water: optical / SAR / fused | Sen1Floods11 India chips | — | — | — | — | run `evaluate.py` after downloading the chips |
 
-The unsupervised change baseline is intentionally transparent. Supervised models (BIT, ChangeFormer) reach F1 ≈ 0.89–0.90 on LEVIR-CD, and plugging one in behind `detect_change()` is the first GPU upgrade on the roadmap.
+The pretrained model is **2.6× more accurate** than the classical baseline, which stays as the zero-dependency fallback. Five pairs is a small sanity check. The ChangeFormer paper reports F1 0.904 on the full 2,048-tile test set, which matches what we measure here.
 
 ## Quick start
 
@@ -86,14 +88,25 @@ npm run dev                      # http://localhost:5173
 **One command with Docker:**
 
 ```bash
-docker compose up --build        # console + API on http://localhost:8000
+docker compose up --build        # console + API + ChangeFormer on http://localhost:8000
+# smaller CPU-only image without the deep model:  docker build --build-arg WITH_ML=0 -t satquery .
 ```
 
-**Optional open-ended VQA** (downloads BLIP, about 1 GB; CPU is fine, a GPU is faster):
+**Accuracy upgrade: pretrained change model** (recommended; open weights, no keys):
 
 ```bash
-pip install -r requirements-ml.txt
+pip install -r requirements-ml.txt   # torch, timm, einops, transformers (CPU is fine)
+python scripts/fetch_models.py       # ChangeFormer code + LEVIR-CD weights from GitHub (~1 GB download, 165 MB kept)
 ```
+
+The sidebar then shows `change: changeformer`. On an NVIDIA GPU it is used automatically.
+
+**Optional: Google Gemini for open-ended questions** (free tier, no credit card):
+
+1. Get a key at <https://aistudio.google.com/apikey>.
+2. Copy `.env.example` to `backend/.env` and set `SATQUERY_GEMINI_API_KEY=...`.
+
+Gemini receives the scene preview and SatQuery's own measurements, and is told to use those numbers, which limits hallucination. Without a key, BLIP (local) or the rule-based answers are used instead. Leave it unset for fully offline, ground-station use: then no data leaves the machine.
 
 ## Demo script (3 minutes)
 
@@ -122,9 +135,11 @@ satquery-ai/
 │   │   ├── raster.py        # GeoTIFF/PNG loading, overview reads, no-data, SAR dB
 │   │   ├── evidence.py      # overlays, heat-maps → PNG
 │   │   ├── store.py         # session scene registry, demo catalogue
-│   │   └── tools/           # landcover · sar · change · fusion · grounding · vqa
+│   │   ├── tools/           # landcover · sar · change · fusion · grounding · vqa
+│   │   └── ml/              # optional deep backends: changeformer (tiled inference) · gemini
 │   ├── scripts/
 │   │   ├── fetch_samples.py # downloads real demo data
+│   │   ├── fetch_models.py  # downloads open pretrained weights from GitHub
 │   │   └── evaluate.py      # benchmarks vs ground truth → docs/benchmarks.md
 │   └── tests/               # pytest: tools, router, API
 ├── frontend/                # React + Vite console (Console · Library · CesiumJS globe)
@@ -137,13 +152,13 @@ satquery-ai/
 
 - The intent classifier is rule-based (v1). It is deterministic and explainable, but it only understands the query patterns it was written for, and unrecognised questions get a scene summary plus a list of supported question types.
 - RGB-only land cover confuses dark seagrass shallows with dark forest, and blue roofs with water. NIR imagery (Sentinel-2, LISS-IV) fixes most of this.
-- Unsupervised change detection over-reports seasonal and shadow changes and can miss a bright new roof that replaced bright bare soil.
+- ChangeFormer was trained on 0.5 m imagery for *building* change. It is used only when GSD ≤ 2 m (or unknown), and 10 m Sentinel-2 pairs use the classical detector, which over-reports seasonal and shadow change.
 - Confidence values are heuristics from classification margins, not calibrated probabilities. The UI says so.
 - Scenes passed to change detection or fusion are assumed to be co-registered. Mismatched sizes are resampled, and a warning is returned.
 
 ## Roadmap
 
-1. GPU plug-ins behind the existing interfaces: ChangeFormer / BIT for change, a fine-tuned segmentation model on BigEarthNet-MM / Sen1Floods11, GeoChat for open-ended VQA and grounding.
+1. Fine-tune ChangeFormer on Indian imagery (Cartosat / LISS-IV pairs), and train a segmentation model on Sen1Floods11 / BigEarthNet-MM for land cover and water; GeoChat for grounded open-ended VQA.
 2. A small local LLM (via Ollama) for function-calling intent routing, keeping the rules as a fallback.
 3. Automatic co-registration and cloud masking with Sentinel-2 SCL / Fmask.
 4. Direct Bhoonidhi search and ingest; tiled full-resolution inference for complete scenes.

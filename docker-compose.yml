@@ -1,8 +1,11 @@
 services:
   satquery:
-    build: .
+    build:
+      context: .
+      args:
+        WITH_ML: "1"   # set to "0" for a small CPU-only image without ChangeFormer
     ports:
       - "8000:8000"
-    environment:
-      SATQUERY_MAX_ANALYSIS_PX: "2048"
-      SATQUERY_VQA_BACKEND: "rules"
+    env_file:
+      - path: backend/.env
+        required: false

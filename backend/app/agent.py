@@ -210,6 +210,22 @@ def _change(query, before, after, it, trace):
     ch = change_t.detect_change(before, after)
     trace.add("tool", f"{ch['method']}; threshold={ch['threshold']}", tool="change-detection")
     n = len(ch["regions"])
+    trace.steps[-1]["tool"] = f"change-detection/{ch['backend']}"
+    if ch["backend"] == "changeformer":
+        # The network is trained to find building change, so its mask *is* the answer to construction questions.
+        answer = (f"The ChangeFormer model finds building change over {fmt_area(ch['area'])} "
+                  f"({pct(ch['fraction'])} of the scene) in {n} main region(s)"
+                  + (" — consistent with new construction." if ch["fraction"] > 0.005 else ".")
+                  if ch["fraction"] > 0 else "No building change detected between the two dates.")
+        if ch["fraction"] > 0:
+            big = ch["regions"][0]
+            answer += f" The largest patch is {fmt_area(big['area'])} (box 1)."
+        images += [{"label": "P(change) from model", "src": ev.heatmap(ch["magnitude"])},
+                   {"label": "Building change (red)", "src": ev.overlay(after.rgb(), [(ch["mask"], ev.COLORS["change"])]),
+                    "boxes": True}]
+        return _pack(answer, ch["confidence"], images, regions=ch["regions"],
+                     stats={"fraction": ch["fraction"], "area": ch["area"], "backend": ch["backend"]},
+                     method=ch["method"], warnings=ch["warnings"])
     if wants_built and before.modality == "optical":
         # New construction = changed pixels that look built-up (or bare, i.e. cleared) in the after image.
         after_lc = lc_t.classify(after)
@@ -291,12 +307,12 @@ def _vqa(query, scene, _cmp, it, trace):
     trace.add("tool", f"measured scene ({lc['method']})", tool="landcover")
     ans = vqa_t.rule_answer(query, target, lc, water)
     backend = "rules"
-    if ans is None and vqa_t.blip_available():
-        text = vqa_t.blip_answer(scene, query)
-        trace.add("tool", f"open-ended question → {vqa_t.settings.blip_model}", tool="vqa/blip")
-        ans = {"answer": f"{text.capitalize()}. (Open-ended answer from a general vision-language model — verify visually.)",
-               "type": "open"}
-        backend = "blip"
+    if ans is None:
+        opened = vqa_t.open_answer(scene, query, lc)
+        if opened:
+            text, backend = opened
+            trace.add("tool", "open-ended question → general vision-language model", tool=f"vqa/{backend}")
+            ans = {"answer": text, "type": "open"}
     if ans is None:
         fr = lc["fractions"]
         ranked = sorted([c for c in fr if c != "other"], key=lambda c: fr[c], reverse=True)

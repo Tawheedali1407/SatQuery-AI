@@ -97,7 +97,9 @@ export default function App() {
           </div>
           {online && (
             <div className="rail-meta">
-              v{health.version} · VQA: {health.vqa_backend}
+              v{health.version} · change: {health.change_backend}
+              <br />
+              VQA: {health.vqa_backend}
               <br />
               GeoTIFF: {health.geotiff_support ? "enabled" : "PNG/JPG only"}
             </div>
